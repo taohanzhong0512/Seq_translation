@@ -1,0 +1,284 @@
+========================================
+  SEQ Converter 项目结构说明
+========================================
+
+一、发布包结构
+========================================
+
+SEQ_Converter_Release/
+├── 01_可执行文件/                    ← 🚀 最终产品
+│   ├── SEQ_to_PNG_Converter.exe     (91 MB, 完全独立)
+│   └── 使用说明.txt                  (用户指南)
+│
+├── 02_源代码/                        ← 💻 Python 源码
+│   ├── seq_to_png_gui.py            (GUI 主程序)
+│   └── seq_to_png.py                (核心转换模块)
+│
+├── 03_打包工具/                      ← 🔧 打包相关
+│   ├── seq_converter.spec           (PyInstaller 配置)
+│   ├── build_with_spec.bat          (一键打包脚本)
+│   ├── requirements_gui.txt         (依赖列表)
+│   └── install_dependencies.bat     (依赖安装脚本)
+│
+├── 04_文档说明/                      ← 📖 文档
+│   ├── 快速打包指南.md               (5分钟学会打包)
+│   └── 项目结构说明.txt              (本文件)
+│
+├── 05_资源文件/                      ← 🎨 图标资源
+│   └── image/
+│       ├── DCS_Application_Logo.ico (原始图标)
+│       ├── DCS_icon_multi.ico       (多尺寸图标)
+│       └── SIOM_logo.png            (SIOM 标志)
+│
+└── README.md                         ← 📄 总说明
+
+
+二、文件用途说明
+========================================
+
+【可执行文件】
+--------------------
+SEQ_to_PNG_Converter.exe
+  - 大小: 约 91 MB
+  - 功能: 独立可执行程序
+  - 依赖: 无（完全自包含）
+  - 用途: 直接分发给用户使用
+
+【源代码文件】
+--------------------
+seq_to_png_gui.py
+  - 功能: GUI 界面程序
+  - 框架: PyQt5 + qfluentwidgets
+  - 包含: 界面设计、事件处理、资源加载
+
+seq_to_png.py
+  - 功能: 核心转换逻辑
+  - 包含: SEQ 文件解析、PNG 生成
+  - 支持: Norpix StreamPix 格式
+
+【打包配置】
+--------------------
+seq_converter.spec
+  - 类型: PyInstaller 配置文件
+  - 定义: 打包行为、资源文件、依赖
+  - 关键配置:
+    * datas: 图标文件路径
+    * hiddenimports: 隐藏依赖
+    * icon: EXE 图标
+
+build_with_spec.bat
+  - 类型: Windows 批处理脚本
+  - 功能: 一键自动打包
+  - 流程:
+    1. 清理旧文件
+    2. 检查依赖
+    3. 执行打包
+    4. 验证结果
+
+requirements_gui.txt
+  - 类型: pip 依赖列表
+  - 包含:
+    * PyQt5 (GUI 框架)
+    * PyQt-Fluent-Widgets (界面组件)
+    * Pillow (图像处理)
+    * NumPy (数值计算)
+
+install_dependencies.bat
+  - 类型: 依赖安装脚本
+  - 功能: 自动安装所有依赖
+  - 使用: 开发环境初始化
+
+【资源文件】
+--------------------
+DCS_Application_Logo.ico
+  - 尺寸: 256×256
+  - 用途: 原始图标文件
+
+DCS_icon_multi.ico
+  - 尺寸: 16×16 到 256×256 (6种)
+  - 用途: EXE 文件图标
+  - 优势: 在不同场景下清晰显示
+
+SIOM_logo.png
+  - 格式: PNG
+  - 用途: 界面右上角 Logo
+  - 显示: 80×80 像素
+
+
+三、打包工作流程
+========================================
+
+开发 → 测试 → 打包 → 验证 → 分发
+  ↓      ↓      ↓      ↓      ↓
+源码   运行   spec   EXE   用户
+修改   调试   配置   测试   使用
+
+
+详细步骤：
+
+1. 开发阶段
+   - 编辑: seq_to_png_gui.py
+   - 编辑: seq_to_png.py
+   - 测试: python seq_to_png_gui.py
+
+2. 准备打包
+   - 检查: 目录结构正确
+   - 确认: 资源文件齐全
+   - 更新: spec 配置文件
+
+3. 执行打包
+   - 运行: build_with_spec.bat
+   - 或: python -m PyInstaller seq_converter.spec
+
+4. 验证结果
+   - 检查: dist/SEQ_to_PNG_Converter.exe
+   - 测试: 所有功能
+   - 验证: 图标显示
+
+5. 分发用户
+   - 复制: SEQ_to_PNG_Converter.exe
+   - 附带: 使用说明.txt
+   - 发送: 给需要的用户
+
+
+四、目录依赖关系
+========================================
+
+打包时必需的目录结构：
+
+项目根目录 (DCS_script)
+├── code/                    ← 工作目录
+│   ├── *.py                ← 源代码
+│   ├── *.spec              ← 配置文件
+│   └── *.bat               ← 脚本文件
+└── image/                   ← 必需！
+    ├── *.ico               ← 图标文件
+    └── *.png               ← Logo 文件
+
+注意：
+  - image 目录必须在 code 的上一级
+  - spec 文件中的路径是相对于 code 目录
+  - 打包时会从 image 目录读取资源
+
+
+五、文件大小说明
+========================================
+
+源文件大小：
+  seq_to_png_gui.py          ~25 KB
+  seq_to_png.py              ~15 KB
+  DCS_icon_multi.ico         ~270 KB
+  SIOM_logo.png              ~15 KB
+  --------------------------------
+  总计                       ~325 KB
+
+打包后大小：
+  SEQ_to_PNG_Converter.exe   ~91 MB
+
+为什么这么大？
+  包含内容：
+  - Python 解释器            ~40 MB
+  - PyQt5 库                 ~30 MB
+  - qfluentwidgets           ~10 MB
+  - NumPy/Pillow             ~8 MB
+  - 其他依赖                 ~3 MB
+  --------------------------------
+  总计                       ~91 MB
+
+
+六、版本管理建议
+========================================
+
+建议保存的文件：
+  ✅ 源代码 (seq_to_png*.py)
+  ✅ 配置文件 (seq_converter.spec)
+  ✅ 资源文件 (image/*)
+  ✅ 文档文件 (*.md, *.txt)
+
+可以删除的文件：
+  ❌ build/ 目录 (临时文件)
+  ❌ __pycache__/ (Python 缓存)
+  ❌ *.pyc (编译文件)
+
+每次发布应记录：
+  📝 版本号
+  📝 修改内容
+  📝 打包日期
+  📝 测试结果
+
+
+七、常用命令参考
+========================================
+
+打包命令：
+  python -m PyInstaller seq_converter.spec --noconfirm
+
+清理重建：
+  python -m PyInstaller seq_converter.spec --clean
+
+查看详细日志：
+  python -m PyInstaller seq_converter.spec --log-level=DEBUG
+
+测试源代码：
+  python seq_to_png_gui.py
+
+安装依赖：
+  pip install -r requirements_gui.txt
+
+检查依赖：
+  pip list | findstr PyQt
+
+
+八、故障排除
+========================================
+
+问题1: 找不到 image 目录
+解决: 确保在 code 的上一级有 image 文件夹
+
+问题2: 打包后图标不显示
+解决: 检查 spec 中 datas 配置是否正确
+
+问题3: 缺少模块
+解决: 将模块添加到 spec 的 hiddenimports
+
+问题4: exe 运行报错
+解决: 在命令行运行查看详细错误
+
+
+九、技术栈
+========================================
+
+语言：
+  - Python 3.14.0
+
+GUI 框架：
+  - PyQt5 5.15.11
+  - qfluentwidgets 1.9.2
+
+图像处理：
+  - Pillow (PIL)
+  - NumPy
+
+打包工具：
+  - PyInstaller 6.16.0
+
+设计风格：
+  - Fluent Design
+  - 科学蓝主题 (#0078d7)
+
+
+十、更新记录
+========================================
+
+v1.0 (2025-11-10)
+  ✅ 初始发布版本
+  ✅ 完整的 GUI 界面
+  ✅ SEQ 到 PNG 转换
+  ✅ 图标正确显示
+  ✅ 完整的打包配置
+
+
+========================================
+更新时间: 2025-11-10
+维护者: DCS Team
+========================================
