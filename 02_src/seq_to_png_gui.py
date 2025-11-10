@@ -32,13 +32,14 @@ class ConvertThread(QThread):
     finished = pyqtSignal(bool, str)  # success, message
     log = pyqtSignal(str)  # log message
 
-    def __init__(self, seq_file, output_dir, start_frame, end_frame, prefix):
+    def __init__(self, seq_file, output_dir, start_frame, end_frame, prefix, format='PNG'):
         super().__init__()
         self.seq_file = seq_file
         self.output_dir = output_dir
         self.start_frame = start_frame
         self.end_frame = end_frame
         self.prefix = prefix
+        self.format = format
         self._is_running = True
 
     def run(self):
@@ -64,7 +65,19 @@ class ConvertThread(QThread):
                 self.finished.emit(False, "起始帧号必须小于结束帧号")
                 return
 
+            # 格式化图像格式
+            self.format = self.format.upper()
+            if self.format not in ["PNG", "TIFF", "BMP"]:
+                self.finished.emit(False, f"不支持的图像格式 '{self.format}'")
+                return
+
+            # 获取文件扩展名
+            ext = self.format.lower()
+            if self.format == "TIFF":
+                ext = "tiff"
+
             self.log.emit(f"开始转换: 帧 {self.start_frame} 到 {self.end_frame-1} (共 {self.end_frame - self.start_frame} 帧)")
+            self.log.emit(f"输出格式: {self.format}")
 
             # 创建输出目录
             if not os.path.exists(self.output_dir):
@@ -158,9 +171,9 @@ class ConvertThread(QThread):
                         return
 
                     # 保存图像
-                    output_filename = f"{self.prefix}_{frame_num:06d}.png"
+                    output_filename = f"{self.prefix}_{frame_num:06d}.{ext}"
                     output_path = os.path.join(self.output_dir, output_filename)
-                    img.save(output_path)
+                    img.save(output_path, format=self.format)
 
                     # 发送进度
                     self.progress.emit(frame_num - self.start_frame + 1, self.end_frame - self.start_frame)
@@ -213,7 +226,7 @@ class SeqToPngGUI(QWidget):
         header_layout = QHBoxLayout()
 
         # 标题
-        title_label = StrongBodyLabel('SEQ 文件转 PNG 图像序列', self)
+        title_label = StrongBodyLabel('SEQ 文件转图像序列', self)
         title_label.setStyleSheet('font-size: 24px; font-weight: bold; color: #0078d7;')
         header_layout.addWidget(title_label)
 
@@ -322,6 +335,16 @@ class SeqToPngGUI(QWidget):
         self.prefix_edit.setText('frame')
         self.prefix_edit.setPlaceholderText('输出文件名前缀')
         param_layout.addWidget(self.prefix_edit, 1, 1, 1, 3)
+
+        # 输出格式
+        format_label = BodyLabel('输出格式:', param_card)
+        format_label.setStyleSheet('color: #1a1a1a; font-size: 14px; font-weight: 500;')
+        param_layout.addWidget(format_label, 2, 0)
+        self.format_combo = ComboBox(param_card)
+        self.format_combo.addItems(['PNG', 'TIFF', 'BMP'])
+        self.format_combo.setCurrentIndex(0)
+        self.format_combo.setMinimumWidth(150)
+        param_layout.addWidget(self.format_combo, 2, 1)
 
         main_layout.addWidget(param_card)
 
@@ -529,6 +552,7 @@ class SeqToPngGUI(QWidget):
         start_frame = self.start_frame_spin.value()
         end_frame = self.end_frame_spin.value() if self.end_frame_spin.value() > 0 else None
         prefix = self.prefix_edit.text() or 'frame'
+        format = self.format_combo.currentText()
 
         # 清空日志和进度
         self.log_text.clear()
@@ -542,7 +566,7 @@ class SeqToPngGUI(QWidget):
         self.output_browse_btn.setEnabled(False)
 
         # 创建并启动转换线程
-        self.convert_thread = ConvertThread(seq_file, output_dir, start_frame, end_frame, prefix)
+        self.convert_thread = ConvertThread(seq_file, output_dir, start_frame, end_frame, prefix, format)
         self.convert_thread.progress.connect(self.on_progress)
         self.convert_thread.finished.connect(self.on_finished)
         self.convert_thread.log.connect(self.add_log)

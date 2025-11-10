@@ -16,11 +16,11 @@ class SeqReader:
 
     def __init__(self, seq_file_path):
         self.seq_file_path = seq_file_path
-        self.width = 0
-        self.height = 0
+        self.width = 2560
+        self.height = 1916
         self.frame_count = 0
         self.bit_depth = 8
-        self.header_size = 1024  # 默认文件头部大小
+        self.header_size = 8192  # 默认文件头部大小
         self.frame_header_size = 0  # 每帧前的头部大小
         self.true_image_size = 0  # 从文件头读取的实际图像大小
 
@@ -129,15 +129,16 @@ class SeqReader:
             print("无法自动识别 SEQ 格式，请手动指定参数")
             return False
 
-    def extract_frames(self, output_dir, start_frame=0, end_frame=None, prefix="frame"):
+    def extract_frames(self, output_dir, start_frame=0, end_frame=None, prefix="frame", format="PNG"):
         """
-        提取帧并保存为 PNG 文件
+        提取帧并保存为图像文件
 
         Args:
             output_dir: 输出目录
             start_frame: 起始帧号 (从0开始)
             end_frame: 结束帧号 (不包含)，None表示到最后一帧
             prefix: 输出文件名前缀
+            format: 图像格式 (PNG, TIFF, BMP)
         """
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -154,7 +155,18 @@ class SeqReader:
             print("错误: 起始帧号必须小于结束帧号")
             return
 
-        print(f"正在提取帧 {start_frame} 到 {end_frame-1}...")
+        # 格式化图像格式
+        format = format.upper()
+        if format not in ["PNG", "TIFF", "BMP"]:
+            print(f"错误: 不支持的图像格式 '{format}'，仅支持 PNG, TIFF, BMP")
+            return
+
+        # 获取文件扩展名
+        ext = format.lower()
+        if format == "TIFF":
+            ext = "tiff"
+
+        print(f"正在提取帧 {start_frame} 到 {end_frame-1}，格式: {format}...")
 
         # 计算每帧的字节数
         bytes_per_pixel = self.bit_depth // 8
@@ -267,10 +279,10 @@ class SeqReader:
                     print(f"不支持的位深度: {self.bit_depth}")
                     return
 
-                # 保存为 PNG
-                output_filename = f"{prefix}_{frame_num:06d}.png"
+                # 保存为指定格式
+                output_filename = f"{prefix}_{frame_num:06d}.{ext}"
                 output_path = os.path.join(output_dir, output_filename)
-                img.save(output_path)
+                img.save(output_path, format=format)
 
                 if (frame_num - start_frame + 1) % 10 == 0:
                     print(f"已处理 {frame_num - start_frame + 1}/{end_frame - start_frame} 帧")
@@ -279,9 +291,9 @@ class SeqReader:
 
 
 def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
-               prefix='frame', width=None, height=None, bitdepth=8):
+               prefix='frame', width=None, height=None, bitdepth=8, format='PNG'):
     """
-    将 SEQ 文件转换为 PNG 图像序列
+    将 SEQ 文件转换为图像序列
 
     Args:
         seq_file: SEQ 文件路径
@@ -292,6 +304,7 @@ def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
         width: 手动指定图像宽度 (默认: None, 自动识别)
         height: 手动指定图像高度 (默认: None, 自动识别)
         bitdepth: 手动指定位深度 (默认: 8)
+        format: 图像格式 (默认: 'PNG', 可选: 'TIFF', 'BMP')
 
     Returns:
         bool: 成功返回 True, 失败返回 False
@@ -300,14 +313,14 @@ def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
         # 最简单的调用
         seq_to_png('input.seq')
 
-        # 指定输出目录
-        seq_to_png('input.seq', output_dir='output_frames')
+        # 指定输出目录和格式
+        seq_to_png('input.seq', output_dir='output_frames', format='TIFF')
 
         # 只提取部分帧
         seq_to_png('input.seq', start_frame=0, end_frame=100)
 
         # 手动指定图像参数
-        seq_to_png('input.seq', width=640, height=480, bitdepth=8)
+        seq_to_png('input.seq', width=640, height=480, bitdepth=8, format='BMP')
     """
     # 检查输入文件是否存在
     if not os.path.exists(seq_file):
@@ -348,7 +361,8 @@ def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
         output_dir=output_dir,
         start_frame=start_frame,
         end_frame=end_frame,
-        prefix=prefix
+        prefix=prefix,
+        format=format
     )
 
     return True
@@ -358,12 +372,13 @@ def main():
     """
     主函数：解析命令行参数并执行转换
     """
-    parser = argparse.ArgumentParser(description='将 SEQ 文件转换为 PNG 图像序列')
+    parser = argparse.ArgumentParser(description='将 SEQ 文件转换为图像序列')
     parser.add_argument('seq_file', help='输入的 SEQ 文件路径')
     parser.add_argument('-o', '--output', default=None, help='输出目录 (默认: seq文件同名目录)')
     parser.add_argument('-s', '--start', type=int, default=0, help='起始帧号 (默认: 0)')
     parser.add_argument('-e', '--end', type=int, default=None, help='结束帧号 (默认: 全部)')
     parser.add_argument('-p', '--prefix', default='frame', help='输出文件名前缀 (默认: frame)')
+    parser.add_argument('-f', '--format', default='PNG', choices=['PNG', 'TIFF', 'BMP'], help='输出图像格式 (默认: PNG)')
     parser.add_argument('-w', '--width', type=int, default=None, help='手动指定图像宽度')
     parser.add_argument('-H', '--height', type=int, default=None, help='手动指定图像高度')
     parser.add_argument('-b', '--bitdepth', type=int, default=8, choices=[8, 16, 24], help='手动指定位深度 (默认: 8)')
@@ -379,7 +394,8 @@ def main():
         prefix=args.prefix,
         width=args.width,
         height=args.height,
-        bitdepth=args.bitdepth
+        bitdepth=args.bitdepth,
+        format=args.format
     )
 
 
@@ -390,7 +406,7 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         # 没有命令行参数，使用默认示例
         print("=" * 60)
-        print("SEQ 转 PNG 脚本 - 示例模式")
+        print("SEQ 转图像序列脚本 - 示例模式")
         print("=" * 60)
         print("\n使用方法:")
         print("  python seq_to_png.py <seq文件路径> [选项]")
@@ -399,13 +415,15 @@ if __name__ == "__main__":
         print("  -s, --start <n>         起始帧号")
         print("  -e, --end <n>           结束帧号")
         print("  -p, --prefix <str>      输出文件名前缀")
+        print("  -f, --format <fmt>      输出格式 (PNG|TIFF|BMP, 默认: PNG)")
         print("  -w, --width <n>         手动指定图像宽度")
         print("  -H, --height <n>        手动指定图像高度")
         print("  -b, --bitdepth <8|16|24> 手动指定位深度")
         print("\n示例:")
         print("  python seq_to_png.py input.seq")
         print("  python seq_to_png.py input.seq -o output_frames -s 0 -e 100")
-        print("  python seq_to_png.py input.seq -w 640 -H 480 -b 8")
+        print("  python seq_to_png.py input.seq -f TIFF")
+        print("  python seq_to_png.py input.seq -f BMP -w 640 -H 480 -b 8")
         print("\n" + "=" * 60)
 
         # 使用项目中的示例文件
