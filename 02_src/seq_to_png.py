@@ -32,6 +32,7 @@ class SeqReader:
         - 文件头: 8192 字节 (固定)
         - 每帧结构: 帧头(时间戳等) + 图像数据
         """
+        print("jog read_header")
         with open(self.seq_file_path, 'rb') as f:
             # 读取足够的头部数据
             header = f.read(8192)
@@ -164,7 +165,7 @@ class SeqReader:
         # 获取文件扩展名
         ext = format.lower()
         if format == "TIFF":
-            ext = "tiff"
+            ext = "tif"
 
         print(f"正在提取帧 {start_frame} 到 {end_frame-1}，格式: {format}...")
 
@@ -207,7 +208,7 @@ class SeqReader:
                     # 检查是否有行填充字节
                     expected_pixels = self.width * self.height
                     actual_bytes = len(img_array)
-
+                    print("jog actual_bytes")
                     if actual_bytes >= expected_pixels:
                         # 计算行步长（stride）- 每行实际占用的字节数
                         bytes_per_row = actual_bytes // self.height
@@ -304,7 +305,7 @@ def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
         width: 手动指定图像宽度 (默认: None, 自动识别)
         height: 手动指定图像高度 (默认: None, 自动识别)
         bitdepth: 手动指定位深度 (默认: 8)
-        format: 图像格式 (默认: 'PNG', 可选: 'TIFF', 'BMP')
+        format: 图像格式 (默认: 'PNG', 可选: 'TIF', 'BMP')
 
     Returns:
         bool: 成功返回 True, 失败返回 False
@@ -314,7 +315,7 @@ def seq_to_png(seq_file, output_dir=None, start_frame=0, end_frame=None,
         seq_to_png('input.seq')
 
         # 指定输出目录和格式
-        seq_to_png('input.seq', output_dir='output_frames', format='TIFF')
+        seq_to_png('input.seq', output_dir='output_frames', format='TIF')
 
         # 只提取部分帧
         seq_to_png('input.seq', start_frame=0, end_frame=100)

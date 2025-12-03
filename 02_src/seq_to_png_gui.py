@@ -74,7 +74,7 @@ class ConvertThread(QThread):
             # 获取文件扩展名
             ext = self.format.lower()
             if self.format == "TIFF":
-                ext = "tiff"
+                ext = "tif"
 
             self.log.emit(f"开始转换: 帧 {self.start_frame} 到 {self.end_frame-1} (共 {self.end_frame - self.start_frame} 帧)")
             self.log.emit(f"输出格式: {self.format}")
@@ -331,10 +331,19 @@ class SeqToPngGUI(QWidget):
         prefix_label = BodyLabel('文件名前缀:', param_card)
         prefix_label.setStyleSheet('color: #1a1a1a; font-size: 14px; font-weight: 500;')
         param_layout.addWidget(prefix_label, 1, 0)
+
+        # 前缀输入框和按钮的水平布局
+        prefix_h_layout = QHBoxLayout()
         self.prefix_edit = LineEdit(param_card)
-        self.prefix_edit.setText('frame')
-        self.prefix_edit.setPlaceholderText('输出文件名前缀')
-        param_layout.addWidget(self.prefix_edit, 1, 1, 1, 3)
+        self.prefix_edit.setPlaceholderText('输出文件名前缀（留空则使用时间戳）')
+        prefix_h_layout.addWidget(self.prefix_edit)
+
+        self.timestamp_btn = TransparentPushButton('使用时间戳', param_card, FluentIcon.DATE_TIME)
+        self.timestamp_btn.clicked.connect(self.use_timestamp_prefix)
+        self.timestamp_btn.setToolTip('点击使用当前时间戳作为前缀')
+        prefix_h_layout.addWidget(self.timestamp_btn)
+
+        param_layout.addLayout(prefix_h_layout, 1, 1, 1, 3)
 
         # 输出格式
         format_label = BodyLabel('输出格式:', param_card)
@@ -512,6 +521,13 @@ class SeqToPngGUI(QWidget):
         """添加日志"""
         self.log_text.append(message)
 
+    def use_timestamp_prefix(self):
+        """使用当前时间戳作为前缀"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.prefix_edit.setText(timestamp)
+        self.add_log(f'已设置前缀为时间戳: {timestamp}')
+
     def start_conversion(self):
         """开始转换"""
         seq_file = self.seq_path_edit.text()
@@ -551,7 +567,14 @@ class SeqToPngGUI(QWidget):
         # 获取参数
         start_frame = self.start_frame_spin.value()
         end_frame = self.end_frame_spin.value() if self.end_frame_spin.value() > 0 else None
-        prefix = self.prefix_edit.text() or 'frame'
+
+        # 如果前缀为空，使用时间戳（精确到秒）
+        prefix = self.prefix_edit.text()
+        if not prefix:
+            from datetime import datetime
+            prefix = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.add_log(f'未指定前缀，自动使用时间戳: {prefix}')
+
         format = self.format_combo.currentText()
 
         # 清空日志和进度

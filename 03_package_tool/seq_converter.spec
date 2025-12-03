@@ -34,7 +34,7 @@ if qfluentwidgets_path:
             datas_list.append((str(file), str(relative_path.parent)))
 
 a = Analysis(
-    ['seq_to_png_gui.py'],
+    ['seq_converter_gui.py'],
     pathex=[spec_root],
     binaries=[],
     datas=datas_list,
