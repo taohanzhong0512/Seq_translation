@@ -24,6 +24,27 @@ class SeqCropper:
         self.reader = SeqReader(seq_file_path)
         self.header_loaded = False
 
+    def _calculate_true_image_size(self, image_size_bytes):
+        """
+        计算 TrueImageSize，按照 NorPix C++ 实现的逻辑
+        TrueImageSize = ImageSizeBytes + 8 字节时间戳，然后对齐到 8192 的倍数
+
+        Args:
+            image_size_bytes: 原始图像数据大小
+
+        Returns:
+            int: 对齐后的 TrueImageSize
+        """
+        # 添加 8 字节时间戳
+        size_with_timestamp = image_size_bytes + 8
+
+        # 对齐到 8192 的倍数
+        alignment = 8192
+        if size_with_timestamp % alignment == 0:
+            return size_with_timestamp
+        else:
+            return ((size_with_timestamp // alignment) + 1) * alignment
+
     def load_header(self):
         """加载 SEQ 文件头信息"""
         if not self.header_loaded:
@@ -180,7 +201,11 @@ class SeqCropper:
 
             # 计算新的图像大小
             new_image_size = roi_width * roi_height * bytes_per_pixel
-            new_true_image_size = new_image_size  # 新文件中不需要帧头
+            # 使用正确的 TrueImageSize 计算方法（包括时间戳和对齐）
+            new_true_image_size = self._calculate_true_image_size(new_image_size)
+
+            print(f"  新图像数据大小: {new_image_size} 字节")
+            print(f"  新 TrueImageSize (对齐后): {new_true_image_size} 字节")
 
             # 准备新的文件头
             with open(self.seq_file_path, 'rb') as f_in:
@@ -266,7 +291,25 @@ class SeqCropper:
                             return False, roi_x, roi_y, f"不支持的位深度: {self.reader.bit_depth}"
 
                         # 写入裁剪后的帧数据
-                        f_out.write(roi_array.tobytes())
+                        img_bytes = roi_array.tobytes()
+                        f_out.write(img_bytes)
+
+                        # 写入 8 字节时间戳（按照 NorPix 格式）
+                        # 时间戳格式：4字节时间 + 2字节毫秒 + 2字节微秒
+                        import time
+                        timestamp_time_t = int(time.time())
+                        timestamp_ms = int((time.time() - timestamp_time_t) * 1000)
+                        timestamp_us = 0  # 微秒部分设为 0
+
+                        f_out.write(struct.pack('<I', timestamp_time_t))  # 4 字节时间
+                        f_out.write(struct.pack('<H', timestamp_ms))      # 2 字节毫秒
+                        f_out.write(struct.pack('<H', timestamp_us))      # 2 字节微秒
+
+                        # 填充到 TrueImageSize
+                        bytes_written = len(img_bytes) + 8  # 图像数据 + 时间戳
+                        padding_size = new_true_image_size - bytes_written
+                        if padding_size > 0:
+                            f_out.write(b'\x00' * padding_size)
 
                         # 进度回调
                         if progress_callback:

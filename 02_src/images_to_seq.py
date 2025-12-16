@@ -33,6 +33,28 @@ class SeqWriter:
         self.frame_count = 0
         self.header_size = 8192  # SEQ 文件头固定大小
         self.file_handle = None
+        self.true_image_size = 0  # 每帧的实际大小（包括时间戳和填充）
+
+    def _calculate_true_image_size(self, image_size_bytes):
+        """
+        计算 TrueImageSize，按照 NorPix C++ 实现的逻辑
+        TrueImageSize = ImageSizeBytes + 8 字节时间戳，然后对齐到 8192 的倍数
+
+        Args:
+            image_size_bytes: 原始图像数据大小
+
+        Returns:
+            int: 对齐后的 TrueImageSize
+        """
+        # 添加 8 字节时间戳
+        size_with_timestamp = image_size_bytes + 8
+
+        # 对齐到 8192 的倍数
+        alignment = 8192
+        if size_with_timestamp % alignment == 0:
+            return size_with_timestamp
+        else:
+            return ((size_with_timestamp // alignment) + 1) * alignment
 
     def _create_header(self, first_image_path):
         """
@@ -102,6 +124,12 @@ class SeqWriter:
         bytes_per_pixel = self.bit_depth // 8
         image_size = self.width * self.height * bytes_per_pixel
 
+        # 计算 TrueImageSize（对齐后的大小，包括时间戳和填充）
+        self.true_image_size = self._calculate_true_image_size(image_size)
+
+        print(f"图像数据大小: {image_size} 字节")
+        print(f"TrueImageSize (对齐后): {self.true_image_size} 字节")
+
         # 图像大小 (偏移 564-567)
         struct.pack_into('<I', header, 564, image_size)
 
@@ -116,9 +144,8 @@ class SeqWriter:
         # Origin (偏移 576-577) - 左上角
         struct.pack_into('<H', header, 576, 0)
 
-        # TrueImageSize (偏移 580-583) - 每帧的总大小（包括帧头）
-        # 对于简单格式，帧头可以为 0
-        struct.pack_into('<I', header, 580, image_size)
+        # TrueImageSize (偏移 580-583) - 每帧的总大小（包括时间戳和填充）
+        struct.pack_into('<I', header, 580, self.true_image_size)
 
         # 建议帧率 (偏移 584-591, double)
         struct.pack_into('<d', header, 584, self.frame_rate)
@@ -222,9 +249,26 @@ class SeqWriter:
                                 print(f"错误: 不支持的位深度 {self.bit_depth}")
                                 return False
 
-                            # 写入图像数据（注意：这里不写入帧头，因为 TrueImageSize = ImageSize）
+                            # 写入图像数据
                             img_bytes = img_array.tobytes()
                             f.write(img_bytes)
+
+                            # 写入 8 字节时间戳（按照 NorPix 格式）
+                            # 时间戳格式：4字节时间 + 2字节毫秒 + 2字节微秒
+                            import time
+                            timestamp_time_t = int(time.time())
+                            timestamp_ms = int((time.time() - timestamp_time_t) * 1000)
+                            timestamp_us = 0  # 微秒部分设为 0
+
+                            f.write(struct.pack('<I', timestamp_time_t))  # 4 字节时间
+                            f.write(struct.pack('<H', timestamp_ms))      # 2 字节毫秒
+                            f.write(struct.pack('<H', timestamp_us))      # 2 字节微秒
+
+                            # 填充到 TrueImageSize
+                            bytes_written = len(img_bytes) + 8  # 图像数据 + 时间戳
+                            padding_size = self.true_image_size - bytes_written
+                            if padding_size > 0:
+                                f.write(b'\x00' * padding_size)
 
                             self.frame_count += 1
 

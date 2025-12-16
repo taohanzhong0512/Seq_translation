@@ -10,6 +10,7 @@ from qfluentwidgets import (
     CardWidget, BodyLabel, StrongBodyLabel, TransparentPushButton
 )
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy, QLabel
+from datetime import datetime
 
 from seq_to_png import SeqReader
 
@@ -17,17 +18,14 @@ from seq_to_png import SeqReader
 def resource_path(relative_path):
     """获取资源文件的绝对路径，支持打包后的环境"""
     try:
-        # PyInstaller 创建临时文件夹，将路径存储在 _MEIPASS 中
         base_path = sys._MEIPASS
     except Exception:
-        # 开发环境中使用相对路径
         base_path = os.path.abspath(".")
-
     return os.path.join(base_path, relative_path)
 
 
 class ConvertThread(QThread):
-    """后台转换线程"""
+    """后台转换线程 (已修正)"""
     progress = pyqtSignal(int, int)  # current, total
     finished = pyqtSignal(bool, str)  # success, message
     log = pyqtSignal(str)  # log message
@@ -44,22 +42,16 @@ class ConvertThread(QThread):
 
     def run(self):
         try:
-            # 创建 SeqReader
             reader = SeqReader(self.seq_file)
-
-            # 读取文件头
             self.log.emit("正在读取 SEQ 文件头信息...")
-            success = reader.read_header()
 
-            if not success:
-                self.finished.emit(False, "无法识别 SEQ 文件格式")
+            if not reader.read_header():
+                self.finished.emit(False, "无法读取或解析 SEQ 文件头。请确保文件是有效的 Norpix SEQ 格式。")
                 return
 
             # 确定帧范围
-            if self.end_frame is None or self.end_frame <= 0:
+            if self.end_frame is None or self.end_frame <= 0 or self.end_frame > reader.frame_count:
                 self.end_frame = reader.frame_count
-
-            self.end_frame = min(self.end_frame, reader.frame_count)
 
             if self.start_frame >= self.end_frame:
                 self.finished.emit(False, "起始帧号必须小于结束帧号")
@@ -71,32 +63,14 @@ class ConvertThread(QThread):
                 self.finished.emit(False, f"不支持的图像格式 '{self.format}'")
                 return
 
-            # 获取文件扩展名
-            ext = self.format.lower()
-            if self.format == "TIFF":
-                ext = "tif"
+            ext = 'tif' if self.format == "TIFF" else self.format.lower()
 
             self.log.emit(f"开始转换: 帧 {self.start_frame} 到 {self.end_frame-1} (共 {self.end_frame - self.start_frame} 帧)")
-            self.log.emit(f"输出格式: {self.format}")
-
-            # 创建输出目录
+            
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir)
                 self.log.emit(f"创建输出目录: {self.output_dir}")
 
-            # 计算参数
-            bytes_per_pixel = reader.bit_depth // 8
-            if reader.bit_depth % 8 != 0:
-                bytes_per_pixel += 1
-
-            expected_image_size = reader.width * reader.height * bytes_per_pixel
-
-            if reader.true_image_size > 0:
-                frame_size = reader.true_image_size
-            else:
-                frame_size = expected_image_size
-
-            # 转换帧
             import numpy as np
             from PIL import Image
 
@@ -106,69 +80,39 @@ class ConvertThread(QThread):
                         self.finished.emit(False, "转换已取消")
                         return
 
-                    # 跳转到指定帧
-                    offset = reader.header_size + frame_num * frame_size
+                    # 使用修正后的逻辑进行读取
+                    offset = reader.header_size + frame_num * reader.true_image_size
                     f.seek(offset)
+                    
+                    # 只读取精确的图像数据，忽略时间戳和填充
+                    frame_data = f.read(reader.image_size_bytes)
 
-                    # 读取帧数据
-                    frame_data = f.read(frame_size)
-
-                    if len(frame_data) < frame_size:
+                    if len(frame_data) < reader.image_size_bytes:
                         self.log.emit(f"警告: 帧 {frame_num} 数据不完整，跳过")
                         continue
 
-                    # 跳过帧头
-                    if reader.frame_header_size > 0:
-                        frame_data = frame_data[reader.frame_header_size:]
-
-                    # 解析图像数据
-                    if reader.bit_depth == 8:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                        expected_pixels = reader.width * reader.height
-                        actual_bytes = len(img_array)
-
-                        if actual_bytes >= expected_pixels:
-                            bytes_per_row = actual_bytes // reader.height
-                            img_array = img_array[:reader.height * bytes_per_row].reshape((reader.height, bytes_per_row))
-                            img_array = img_array[:, :reader.width]
+                    try:
+                        # 图像处理逻辑现在变得简单且正确
+                        if reader.bit_depth == 8:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((reader.height, reader.width))
+                            img = Image.fromarray(img_array, mode='L')
+                        elif reader.bit_depth == 16:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint16).reshape((reader.height, reader.width))
+                            if self.format == 'TIFF':
+                                img = Image.fromarray(img_array, mode='I;16')
+                            else:
+                                img_array_8bit = (img_array / 256).astype(np.uint8)
+                                img = Image.fromarray(img_array_8bit, mode='L')
+                        elif reader.bit_depth == 24:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((reader.height, reader.width, 3))
+                            img = Image.fromarray(img_array, mode='RGB')
                         else:
-                            img_array = img_array.reshape((reader.height, reader.width))
-
-                        img = Image.fromarray(img_array, mode='L')
-
-                    elif reader.bit_depth == 16:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint16)
-                        expected_pixels = reader.width * reader.height
-                        actual_pixels = len(img_array)
-
-                        if actual_pixels >= expected_pixels:
-                            pixels_per_row = actual_pixels // reader.height
-                            img_array = img_array[:reader.height * pixels_per_row].reshape((reader.height, pixels_per_row))
-                            img_array = img_array[:, :reader.width]
-                        else:
-                            img_array = img_array.reshape((reader.height, reader.width))
-
-                        img_array_8bit = (img_array / 256).astype(np.uint8)
-                        img = Image.fromarray(img_array_8bit, mode='L')
-
-                    elif reader.bit_depth == 24:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                        expected_bytes = reader.width * reader.height * 3
-                        actual_bytes = len(img_array)
-
-                        if actual_bytes >= expected_bytes:
-                            bytes_per_row = actual_bytes // reader.height
-                            img_array = img_array[:reader.height * bytes_per_row].reshape((reader.height, bytes_per_row))
-                            img_array = img_array[:, :reader.width * 3]
-                            img_array = img_array.reshape((reader.height, reader.width, 3))
-                        else:
-                            img_array = img_array.reshape((reader.height, reader.width, 3))
-
-                        img = Image.fromarray(img_array, mode='RGB')
-
-                    else:
-                        self.finished.emit(False, f"不支持的位深度: {reader.bit_depth}")
-                        return
+                            self.log.emit(f"警告: 帧 {frame_num} 的位深度不受支持 ({reader.bit_depth})，已跳过")
+                            continue
+                    
+                    except ValueError as ve:
+                        self.log.emit(f"错误: 处理帧 {frame_num} 时发生数据错误 (可能尺寸不匹配): {ve}")
+                        continue
 
                     # 保存图像
                     output_filename = f"{self.prefix}_{frame_num:06d}.{ext}"
@@ -428,24 +372,6 @@ class SeqToPngGUI(QWidget):
         self.start_btn.clicked.connect(self.start_conversion)
         self.start_btn.setMinimumWidth(140)
         self.start_btn.setMinimumHeight(40)
-        self.start_btn.setStyleSheet("""
-            PushButton {
-                background-color: rgba(255, 255, 255, 0.95);
-                color: #0078d7;
-                border: 2px solid rgba(255, 255, 255, 0.6);
-                border-radius: 6px;
-                font-size: 15px;
-                font-weight: bold;
-                padding: 8px 16px;
-            }
-            PushButton:hover {
-                background-color: rgba(255, 255, 255, 1);
-                border: 2px solid rgba(255, 255, 255, 0.8);
-            }
-            PushButton:pressed {
-                background-color: rgba(240, 240, 240, 0.95);
-            }
-        """)
         button_layout.addWidget(self.start_btn)
 
         button_layout.addSpacing(10)
@@ -455,51 +381,18 @@ class SeqToPngGUI(QWidget):
         self.stop_btn.setEnabled(False)
         self.stop_btn.setMinimumWidth(140)
         self.stop_btn.setMinimumHeight(40)
-        self.stop_btn.setStyleSheet("""
-            PushButton {
-                background-color: rgba(255, 255, 255, 0.95);
-                color: #e74856;
-                border: 2px solid rgba(255, 255, 255, 0.6);
-                border-radius: 6px;
-                font-size: 15px;
-                font-weight: bold;
-                padding: 8px 16px;
-            }
-            PushButton:hover {
-                background-color: rgba(255, 255, 255, 1);
-                border: 2px solid rgba(255, 255, 255, 0.8);
-            }
-            PushButton:pressed {
-                background-color: rgba(240, 240, 240, 0.95);
-            }
-            PushButton:disabled {
-                background-color: rgba(255, 255, 255, 0.5);
-                color: rgba(128, 128, 128, 0.7);
-                border: 2px solid rgba(200, 200, 200, 0.4);
-            }
-        """)
         button_layout.addWidget(self.stop_btn)
 
         main_layout.addLayout(button_layout)
 
-        # 设置主题为浅色（科学蓝主题）
         setTheme(Theme.LIGHT)
-
-        # 应用科学蓝配色
         from qfluentwidgets import setThemeColor
-        setThemeColor(QColor(0, 120, 215))  # 科学蓝色
+        setThemeColor(QColor(0, 120, 215))
 
     def browse_seq_file(self):
-        """浏览 SEQ 文件"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            '选择 SEQ 文件',
-            '',
-            'SEQ Files (*.seq);;All Files (*.*)'
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, '选择 SEQ 文件', '', 'SEQ Files (*.seq);;All Files (*.*)')
         if file_path:
             self.seq_path_edit.setText(file_path)
-            # 自动设置输出目录
             if not self.output_path_edit.text():
                 seq_basename = os.path.splitext(os.path.basename(file_path))[0]
                 output_dir = os.path.join(os.path.dirname(file_path), f"{seq_basename}_frames")
@@ -507,152 +400,88 @@ class SeqToPngGUI(QWidget):
             self.add_log(f'选择文件: {file_path}')
 
     def browse_output_dir(self):
-        """浏览输出目录"""
-        dir_path = QFileDialog.getExistingDirectory(
-            self,
-            '选择输出目录',
-            ''
-        )
+        dir_path = QFileDialog.getExistingDirectory(self, '选择输出目录', '')
         if dir_path:
             self.output_path_edit.setText(dir_path)
             self.add_log(f'输出目录: {dir_path}')
 
     def add_log(self, message):
-        """添加日志"""
         self.log_text.append(message)
 
     def use_timestamp_prefix(self):
-        """使用当前时间戳作为前缀"""
-        from datetime import datetime
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.prefix_edit.setText(timestamp)
         self.add_log(f'已设置前缀为时间戳: {timestamp}')
 
     def start_conversion(self):
-        """开始转换"""
         seq_file = self.seq_path_edit.text()
         output_dir = self.output_path_edit.text()
 
-        # 验证输入
-        if not seq_file:
-            InfoBar.error(
-                title='错误',
-                content='请选择 SEQ 文件',
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=3000
-            )
+        if not seq_file or not os.path.exists(seq_file):
+            InfoBar.error(title='错误', content='请选择有效的 SEQ 文件', parent=self, position=InfoBarPosition.TOP, duration=3000)
             return
-
-        if not os.path.exists(seq_file):
-            InfoBar.error(
-                title='错误',
-                content='SEQ 文件不存在',
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=3000
-            )
-            return
-
         if not output_dir:
-            InfoBar.error(
-                title='错误',
-                content='请选择输出目录',
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=3000
-            )
+            InfoBar.error(title='错误', content='请选择输出目录', parent=self, position=InfoBarPosition.TOP, duration=3000)
             return
 
-        # 获取参数
         start_frame = self.start_frame_spin.value()
         end_frame = self.end_frame_spin.value() if self.end_frame_spin.value() > 0 else None
-
-        # 如果前缀为空，使用时间戳（精确到秒）
-        prefix = self.prefix_edit.text()
-        if not prefix:
-            from datetime import datetime
-            prefix = datetime.now().strftime('%Y%m%d_%H%M%S')
-            self.add_log(f'未指定前缀，自动使用时间戳: {prefix}')
-
+        prefix = self.prefix_edit.text() or datetime.now().strftime('%Y%m%d_%H%M%S')
         format = self.format_combo.currentText()
 
-        # 清空日志和进度
         self.log_text.clear()
         self.progress_bar.setValue(0)
         self.progress_label.setText('准备开始...')
-
-        # 禁用控件
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.seq_browse_btn.setEnabled(False)
-        self.output_browse_btn.setEnabled(False)
 
-        # 创建并启动转换线程
-        self.convert_thread = ConvertThread(seq_file, output_dir, start_frame, end_frame, prefix, format)
-        self.convert_thread.progress.connect(self.on_progress)
-        self.convert_thread.finished.connect(self.on_finished)
-        self.convert_thread.log.connect(self.add_log)
-        self.convert_thread.start()
+        try:
+            self.convert_thread = ConvertThread(seq_file, output_dir, start_frame, end_frame, prefix, format)
+            self.convert_thread.progress.connect(self.on_progress)
+            self.convert_thread.finished.connect(self.on_finished)
+            self.convert_thread.log.connect(self.add_log)
+            self.convert_thread.start()
 
-        self.add_log('=' * 50)
-        self.add_log('开始转换...')
+            self.add_log('=' * 50)
+            self.add_log('开始转换...')
+        except Exception as e:
+            self.add_log(f"启动转换线程失败: {e}")
+            self.on_finished(False, f"启动转换线程失败: {e}")
+
 
     def stop_conversion(self):
-        """停止转换"""
         if self.convert_thread and self.convert_thread.isRunning():
             self.add_log('正在停止转换...')
             self.convert_thread.stop()
             self.convert_thread.wait()
 
     def on_progress(self, current, total):
-        """更新进度"""
-        progress = int((current / total) * 100)
-        self.progress_bar.setValue(progress)
-        self.progress_label.setText(f'已处理: {current}/{total} 帧 ({progress}%)')
+        if total > 0:
+            progress = int((current / total) * 100)
+            self.progress_bar.setValue(progress)
+            self.progress_label.setText(f'已处理: {current}/{total} 帧 ({progress}%)')
 
     def on_finished(self, success, message):
-        """转换完成"""
-        # 恢复控件
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.seq_browse_btn.setEnabled(True)
-        self.output_browse_btn.setEnabled(True)
-
         self.add_log('=' * 50)
 
         if success:
             self.progress_bar.setValue(100)
             self.progress_label.setText('转换完成!')
             self.add_log(f'成功: {message}')
-            InfoBar.success(
-                title='成功',
-                content=message,
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=5000
-            )
+            InfoBar.success(title='成功', content=message, parent=self, position=InfoBarPosition.TOP, duration=5000)
         else:
             self.progress_label.setText('转换失败')
             self.add_log(f'失败: {message}')
-            InfoBar.error(
-                title='错误',
-                content=message,
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=5000
-            )
+            InfoBar.error(title='错误', content=message, parent=self, position=InfoBarPosition.TOP, duration=5000)
 
 
 def main():
     app = QApplication(sys.argv)
-
-    # 设置应用样式
     app.setStyle('Fusion')
-
     window = SeqToPngGUI()
     window.show()
-
     sys.exit(app.exec_())
 
 

@@ -280,62 +280,38 @@ class SeqToImagesThread(QThread):
                         self.finished.emit(False, "转换已取消")
                         return
 
+                    # 使用修正后的逻辑：跳转到帧位置，只读取图像数据部分
                     offset = reader.header_size + frame_num * frame_size
                     f.seek(offset)
-                    frame_data = f.read(frame_size)
 
-                    if len(frame_data) < frame_size:
+                    # 只读取精确的图像数据，忽略时间戳和填充
+                    frame_data = f.read(reader.image_size_bytes)
+
+                    if len(frame_data) < reader.image_size_bytes:
                         self.log.emit(f"警告: 帧 {frame_num} 数据不完整，跳过")
                         continue
 
-                    if reader.frame_header_size > 0:
-                        frame_data = frame_data[reader.frame_header_size:]
-
-                    # 处理不同位深度
-                    if reader.bit_depth == 8:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                        actual_bytes = len(img_array)
-                        expected_pixels = reader.width * reader.height
-
-                        if actual_bytes >= expected_pixels:
-                            bytes_per_row = actual_bytes // reader.height
-                            img_array = img_array[:reader.height * bytes_per_row].reshape((reader.height, bytes_per_row))
-                            img_array = img_array[:, :reader.width]
+                    # 处理不同位深度（现在 frame_data 只包含图像数据，不含时间戳和填充）
+                    try:
+                        if reader.bit_depth == 8:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((reader.height, reader.width))
+                            img = Image.fromarray(img_array, mode='L')
+                        elif reader.bit_depth == 16:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint16).reshape((reader.height, reader.width))
+                            if self.format == 'TIFF':
+                                img = Image.fromarray(img_array, mode='I;16')
+                            else:
+                                img_array_8bit = (img_array / 256).astype(np.uint8)
+                                img = Image.fromarray(img_array_8bit, mode='L')
+                        elif reader.bit_depth == 24:
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((reader.height, reader.width, 3))
+                            img = Image.fromarray(img_array, mode='RGB')
                         else:
-                            img_array = img_array.reshape((reader.height, reader.width))
-                        img = Image.fromarray(img_array, mode='L')
-
-                    elif reader.bit_depth == 16:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint16)
-                        actual_pixels = len(img_array)
-                        expected_pixels = reader.width * reader.height
-
-                        if actual_pixels >= expected_pixels:
-                            pixels_per_row = actual_pixels // reader.height
-                            img_array = img_array[:reader.height * pixels_per_row].reshape((reader.height, pixels_per_row))
-                            img_array = img_array[:, :reader.width]
-                        else:
-                            img_array = img_array.reshape((reader.height, reader.width))
-                        img_array_8bit = (img_array / 256).astype(np.uint8)
-                        img = Image.fromarray(img_array_8bit, mode='L')
-
-                    elif reader.bit_depth == 24:
-                        img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                        actual_bytes = len(img_array)
-                        expected_bytes = reader.width * reader.height * 3
-
-                        if actual_bytes >= expected_bytes:
-                            bytes_per_row = actual_bytes // reader.height
-                            img_array = img_array[:reader.height * bytes_per_row].reshape((reader.height, bytes_per_row))
-                            img_array = img_array[:, :reader.width * 3]
-                            img_array = img_array.reshape((reader.height, reader.width, 3))
-                        else:
-                            img_array = img_array.reshape((reader.height, reader.width, 3))
-                        img = Image.fromarray(img_array, mode='RGB')
-
-                    else:
-                        self.finished.emit(False, f"不支持的位深度: {reader.bit_depth}")
-                        return
+                            self.log.emit(f"警告: 帧 {frame_num} 的位深度不受支持 ({reader.bit_depth})，已跳过")
+                            continue
+                    except ValueError as ve:
+                        self.log.emit(f"错误: 处理帧 {frame_num} 时发生数据错误 (可能尺寸不匹配): {ve}")
+                        continue
 
                     output_filename = f"{self.prefix}_{frame_num:06d}.{ext}"
                     output_path = os.path.join(self.output_dir, output_filename)
@@ -686,40 +662,53 @@ class ConverterGUI(QWidget):
         # 参数设置卡片
         param_card = CardWidget(widget)
         param_card.setStyleSheet("CardWidget { background-color: white; border-radius: 10px; }")
-        param_layout = QGridLayout(param_card)
+        param_layout = QVBoxLayout(param_card)
         param_layout.setContentsMargins(20, 20, 20, 20)
         param_layout.setSpacing(12)
 
-        # 起始帧
-        param_layout.addWidget(BodyLabel('起始帧号:', param_card), 0, 0)
+        # 第一行：起始帧和结束帧
+        row1_layout = QHBoxLayout()
+        row1_layout.addWidget(BodyLabel('起始帧号:', param_card))
         self.s2i_start_spin = SpinBox(param_card)
         self.s2i_start_spin.setRange(0, 999999)
         self.s2i_start_spin.setValue(0)
-        param_layout.addWidget(self.s2i_start_spin, 0, 1)
+        self.s2i_start_spin.setFixedWidth(120)
+        row1_layout.addWidget(self.s2i_start_spin)
 
-        # 结束帧
-        param_layout.addWidget(BodyLabel('结束帧号:', param_card), 0, 2)
+        row1_layout.addSpacing(20)
+        row1_layout.addWidget(BodyLabel('结束帧号:', param_card))
         self.s2i_end_spin = SpinBox(param_card)
         self.s2i_end_spin.setRange(0, 999999)
         self.s2i_end_spin.setValue(0)
         self.s2i_end_spin.setSpecialValueText('全部')
-        param_layout.addWidget(self.s2i_end_spin, 0, 3)
+        self.s2i_end_spin.setFixedWidth(120)
+        row1_layout.addWidget(self.s2i_end_spin)
+        row1_layout.addStretch()
+        param_layout.addLayout(row1_layout)
 
-        # 文件名前缀
-        param_layout.addWidget(BodyLabel('文件名前缀:', param_card), 1, 0)
+        # 第二行：文件名前缀
+        row2_layout = QHBoxLayout()
+        row2_layout.addWidget(BodyLabel('文件名前缀:', param_card))
         self.s2i_prefix_edit = LineEdit(param_card)
         self.s2i_prefix_edit.setPlaceholderText('留空则使用时间戳')
-        param_layout.addWidget(self.s2i_prefix_edit, 1, 1, 1, 2)
+        self.s2i_prefix_edit.setFixedWidth(200)
+        row2_layout.addWidget(self.s2i_prefix_edit)
 
         self.timestamp_btn = TransparentPushButton('使用时间戳', param_card, FluentIcon.DATE_TIME)
         self.timestamp_btn.clicked.connect(lambda: self.use_timestamp(self.s2i_prefix_edit))
-        param_layout.addWidget(self.timestamp_btn, 1, 3)
+        row2_layout.addWidget(self.timestamp_btn)
+        row2_layout.addStretch()
+        param_layout.addLayout(row2_layout)
 
-        # 输出格式
-        param_layout.addWidget(BodyLabel('输出格式:', param_card), 2, 0)
+        # 第三行：输出格式
+        row3_layout = QHBoxLayout()
+        row3_layout.addWidget(BodyLabel('输出格式:', param_card))
         self.s2i_format_combo = ComboBox(param_card)
         self.s2i_format_combo.addItems(['PNG', 'TIFF', 'BMP'])
-        param_layout.addWidget(self.s2i_format_combo, 2, 1)
+        self.s2i_format_combo.setFixedWidth(120)
+        row3_layout.addWidget(self.s2i_format_combo)
+        row3_layout.addStretch()
+        param_layout.addLayout(row3_layout)
 
         layout.addWidget(param_card)
 
@@ -776,67 +765,90 @@ class ConverterGUI(QWidget):
         # 参数设置卡片
         param_card = CardWidget(widget)
         param_card.setStyleSheet("CardWidget { background-color: white; border-radius: 10px; }")
-        param_layout = QGridLayout(param_card)
+        param_layout = QVBoxLayout(param_card)
         param_layout.setContentsMargins(20, 20, 20, 20)
         param_layout.setSpacing(12)
 
-        # 输出类型
-        param_layout.addWidget(BodyLabel('输出类型:', param_card), 0, 0)
+        # 第一行：输出类型和输入格式
+        row1_layout = QHBoxLayout()
+        row1_layout.addWidget(BodyLabel('输出类型:', param_card))
         self.i2o_output_type_combo = ComboBox(param_card)
         self.i2o_output_type_combo.addItems(['SEQ', 'AVI', 'MP4', 'MOV'])
         self.i2o_output_type_combo.currentIndexChanged.connect(self.on_output_type_changed)
-        param_layout.addWidget(self.i2o_output_type_combo, 0, 1)
+        self.i2o_output_type_combo.setFixedWidth(120)
+        row1_layout.addWidget(self.i2o_output_type_combo)
 
-        # 输入格式
-        param_layout.addWidget(BodyLabel('输入图像格式:', param_card), 0, 2)
+        row1_layout.addSpacing(20)
+        row1_layout.addWidget(BodyLabel('输入图像格式:', param_card))
         self.i2o_image_format_combo = ComboBox(param_card)
         self.i2o_image_format_combo.addItems(['全部', 'PNG', 'BMP', 'TIFF'])
-        param_layout.addWidget(self.i2o_image_format_combo, 0, 3)
+        self.i2o_image_format_combo.setFixedWidth(120)
+        row1_layout.addWidget(self.i2o_image_format_combo)
+        row1_layout.addStretch()
+        param_layout.addLayout(row1_layout)
 
-        # 帧率
-        param_layout.addWidget(BodyLabel('帧率 (fps):', param_card), 1, 0)
+        # 第二行：帧率和位深度/编码
+        row2_layout = QHBoxLayout()
+        row2_layout.addWidget(BodyLabel('帧率 (fps):', param_card))
         self.i2o_framerate_spin = DoubleSpinBox(param_card)
         self.i2o_framerate_spin.setRange(1.0, 240.0)
         self.i2o_framerate_spin.setValue(30.0)
         self.i2o_framerate_spin.setDecimals(1)
-        param_layout.addWidget(self.i2o_framerate_spin, 1, 1)
+        self.i2o_framerate_spin.setFixedWidth(120)
+        row2_layout.addWidget(self.i2o_framerate_spin)
 
-        # SEQ 特有参数
+        row2_layout.addSpacing(20)
+        # SEQ 特有参数：位深度
         self.seq_bitdepth_label = BodyLabel('位深度:', param_card)
-        param_layout.addWidget(self.seq_bitdepth_label, 1, 2)
+        row2_layout.addWidget(self.seq_bitdepth_label)
         self.i2o_bitdepth_combo = ComboBox(param_card)
         self.i2o_bitdepth_combo.addItems(['8', '16', '24'])
         self.i2o_bitdepth_combo.setCurrentIndex(0)
-        param_layout.addWidget(self.i2o_bitdepth_combo, 1, 3)
+        self.i2o_bitdepth_combo.setFixedWidth(120)
+        row2_layout.addWidget(self.i2o_bitdepth_combo)
 
-        # 视频特有参数
+        # 视频特有参数：编码
         self.video_codec_label = BodyLabel('视频编码:', param_card)
-        param_layout.addWidget(self.video_codec_label, 2, 0)
+        row2_layout.addWidget(self.video_codec_label)
         self.i2o_codec_combo = ComboBox(param_card)
         self.i2o_codec_combo.addItems(['auto', 'libxvid', 'libx264', 'libx265'])
-        param_layout.addWidget(self.i2o_codec_combo, 2, 1)
+        self.i2o_codec_combo.setFixedWidth(120)
+        row2_layout.addWidget(self.i2o_codec_combo)
+        row2_layout.addStretch()
+        param_layout.addLayout(row2_layout)
 
+        # 第三行：视频质量
+        row3_layout = QHBoxLayout()
         self.video_quality_label = BodyLabel('视频质量:', param_card)
-        param_layout.addWidget(self.video_quality_label, 2, 2)
+        row3_layout.addWidget(self.video_quality_label)
         self.i2o_quality_combo = ComboBox(param_card)
         self.i2o_quality_combo.addItems(['low', 'medium', 'high', 'best'])
         self.i2o_quality_combo.setCurrentIndex(2)
-        param_layout.addWidget(self.i2o_quality_combo, 2, 3)
+        self.i2o_quality_combo.setFixedWidth(120)
+        row3_layout.addWidget(self.i2o_quality_combo)
+        row3_layout.addStretch()
+        param_layout.addLayout(row3_layout)
 
-        # 帧范围
-        param_layout.addWidget(BodyLabel('起始帧号:', param_card), 3, 0)
+        # 第四行：帧范围
+        row4_layout = QHBoxLayout()
+        row4_layout.addWidget(BodyLabel('起始帧号:', param_card))
         self.i2o_start_spin = SpinBox(param_card)
         self.i2o_start_spin.setRange(0, 999999)
         self.i2o_start_spin.setValue(0)
         self.i2o_start_spin.setSpecialValueText('起始')
-        param_layout.addWidget(self.i2o_start_spin, 3, 1)
+        self.i2o_start_spin.setFixedWidth(120)
+        row4_layout.addWidget(self.i2o_start_spin)
 
-        param_layout.addWidget(BodyLabel('结束帧号:', param_card), 3, 2)
+        row4_layout.addSpacing(20)
+        row4_layout.addWidget(BodyLabel('结束帧号:', param_card))
         self.i2o_end_spin = SpinBox(param_card)
         self.i2o_end_spin.setRange(0, 999999)
         self.i2o_end_spin.setValue(0)
         self.i2o_end_spin.setSpecialValueText('末尾')
-        param_layout.addWidget(self.i2o_end_spin, 3, 3)
+        self.i2o_end_spin.setFixedWidth(120)
+        row4_layout.addWidget(self.i2o_end_spin)
+        row4_layout.addStretch()
+        param_layout.addLayout(row4_layout)
 
         layout.addWidget(param_card)
 
@@ -930,42 +942,52 @@ class ConverterGUI(QWidget):
         # ROI 参数设置卡片
         roi_param_card = CardWidget(widget)
         roi_param_card.setStyleSheet("CardWidget { background-color: white; border-radius: 10px; }")
-        roi_param_layout = QGridLayout(roi_param_card)
+        roi_param_layout = QVBoxLayout(roi_param_card)
         roi_param_layout.setContentsMargins(20, 20, 20, 20)
         roi_param_layout.setSpacing(12)
 
-        # ROI 中心 X
-        roi_param_layout.addWidget(BodyLabel('ROI 中心 X:', roi_param_card), 0, 0)
+        # 第一行：ROI 中心坐标
+        row1_layout = QHBoxLayout()
+        row1_layout.addWidget(BodyLabel('ROI 中心 X:', roi_param_card))
         self.roi_center_x_spin = SpinBox(roi_param_card)
         self.roi_center_x_spin.setRange(0, 9999)
         self.roi_center_x_spin.setValue(1280)
-        roi_param_layout.addWidget(self.roi_center_x_spin, 0, 1)
+        self.roi_center_x_spin.setFixedWidth(120)
+        row1_layout.addWidget(self.roi_center_x_spin)
 
-        # ROI 中心 Y
-        roi_param_layout.addWidget(BodyLabel('ROI 中心 Y:', roi_param_card), 0, 2)
+        row1_layout.addSpacing(20)
+        row1_layout.addWidget(BodyLabel('ROI 中心 Y:', roi_param_card))
         self.roi_center_y_spin = SpinBox(roi_param_card)
         self.roi_center_y_spin.setRange(0, 9999)
         self.roi_center_y_spin.setValue(958)
-        roi_param_layout.addWidget(self.roi_center_y_spin, 0, 3)
+        self.roi_center_y_spin.setFixedWidth(120)
+        row1_layout.addWidget(self.roi_center_y_spin)
+        row1_layout.addStretch()
+        roi_param_layout.addLayout(row1_layout)
 
-        # ROI 宽度
-        roi_param_layout.addWidget(BodyLabel('ROI 宽度:', roi_param_card), 1, 0)
+        # 第二行：ROI 尺寸
+        row2_layout = QHBoxLayout()
+        row2_layout.addWidget(BodyLabel('ROI 宽度:', roi_param_card))
         self.roi_width_spin = SpinBox(roi_param_card)
         self.roi_width_spin.setRange(1, 9999)
         self.roi_width_spin.setValue(800)
-        roi_param_layout.addWidget(self.roi_width_spin, 1, 1)
+        self.roi_width_spin.setFixedWidth(120)
+        row2_layout.addWidget(self.roi_width_spin)
 
-        # ROI 高度
-        roi_param_layout.addWidget(BodyLabel('ROI 高度:', roi_param_card), 1, 2)
+        row2_layout.addSpacing(20)
+        row2_layout.addWidget(BodyLabel('ROI 高度:', roi_param_card))
         self.roi_height_spin = SpinBox(roi_param_card)
         self.roi_height_spin.setRange(1, 9999)
         self.roi_height_spin.setValue(600)
-        roi_param_layout.addWidget(self.roi_height_spin, 1, 3)
+        self.roi_height_spin.setFixedWidth(120)
+        row2_layout.addWidget(self.roi_height_spin)
+        row2_layout.addStretch()
+        roi_param_layout.addLayout(row2_layout)
 
         # 添加提示信息
         info_label = BodyLabel('提示: 输出文件名将自动添加 ROI 左上角坐标后缀', roi_param_card)
         info_label.setStyleSheet('color: #666666; font-size: 12px; font-style: italic;')
-        roi_param_layout.addWidget(info_label, 2, 0, 1, 4)
+        roi_param_layout.addWidget(info_label)
 
         layout.addWidget(roi_param_card)
 
