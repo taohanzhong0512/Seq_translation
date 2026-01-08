@@ -86,60 +86,25 @@ class SeqCropper:
                 offset = self.reader.header_size + frame_num * frame_size
                 f.seek(offset)
 
-                # 读取帧数据
-                frame_data = f.read(frame_size)
+                # 只读取图像数据部分，不包括时间戳和填充（参考 seq_to_png.py 的实现）
+                frame_data = f.read(self.reader.image_size_bytes)
 
-                if len(frame_data) < frame_size:
+                if len(frame_data) < self.reader.image_size_bytes:
                     print(f"警告: 帧 {frame_num} 数据不完整")
                     return None
 
-                # 跳过帧头
-                if self.reader.frame_header_size > 0:
-                    frame_data = frame_data[self.reader.frame_header_size:]
-
                 # 解析图像数据
                 if self.reader.bit_depth == 8:
-                    img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                    expected_pixels = self.reader.width * self.reader.height
-                    actual_bytes = len(img_array)
-
-                    if actual_bytes >= expected_pixels:
-                        bytes_per_row = actual_bytes // self.reader.height
-                        img_array = img_array[:self.reader.height * bytes_per_row].reshape((self.reader.height, bytes_per_row))
-                        img_array = img_array[:, :self.reader.width]
-                    else:
-                        img_array = img_array.reshape((self.reader.height, self.reader.width))
-
+                    img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((self.reader.height, self.reader.width))
                     img = Image.fromarray(img_array, mode='L')
 
                 elif self.reader.bit_depth == 16:
-                    img_array = np.frombuffer(frame_data, dtype=np.uint16)
-                    expected_pixels = self.reader.width * self.reader.height
-                    actual_pixels = len(img_array)
-
-                    if actual_pixels >= expected_pixels:
-                        pixels_per_row = actual_pixels // self.reader.height
-                        img_array = img_array[:self.reader.height * pixels_per_row].reshape((self.reader.height, pixels_per_row))
-                        img_array = img_array[:, :self.reader.width]
-                    else:
-                        img_array = img_array.reshape((self.reader.height, self.reader.width))
-
+                    img_array = np.frombuffer(frame_data, dtype=np.uint16).reshape((self.reader.height, self.reader.width))
                     img_array_8bit = (img_array / 256).astype(np.uint8)
                     img = Image.fromarray(img_array_8bit, mode='L')
 
                 elif self.reader.bit_depth == 24:
-                    img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                    expected_bytes = self.reader.width * self.reader.height * 3
-                    actual_bytes = len(img_array)
-
-                    if actual_bytes >= expected_bytes:
-                        bytes_per_row = actual_bytes // self.reader.height
-                        img_array = img_array[:self.reader.height * bytes_per_row].reshape((self.reader.height, bytes_per_row))
-                        img_array = img_array[:, :self.reader.width * 3]
-                        img_array = img_array.reshape((self.reader.height, self.reader.width, 3))
-                    else:
-                        img_array = img_array.reshape((self.reader.height, self.reader.width, 3))
-
+                    img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((self.reader.height, self.reader.width, 3))
                     img = Image.fromarray(img_array, mode='RGB')
 
                 else:
@@ -229,61 +194,26 @@ class SeqCropper:
                         offset = self.reader.header_size + frame_num * frame_size
                         f_in.seek(offset)
 
-                        # 读取帧数据
-                        frame_data = f_in.read(frame_size)
+                        # 只读取图像数据部分，不包括时间戳和填充（参考 seq_to_png.py 的实现）
+                        frame_data = f_in.read(self.reader.image_size_bytes)
 
-                        if len(frame_data) < frame_size:
+                        if len(frame_data) < self.reader.image_size_bytes:
                             print(f"警告: 帧 {frame_num} 数据不完整，跳过")
                             continue
 
-                        # 跳过帧头
-                        if self.reader.frame_header_size > 0:
-                            frame_data = frame_data[self.reader.frame_header_size:]
-
                         # 解析图像数据并裁剪
                         if self.reader.bit_depth == 8:
-                            img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                            expected_pixels = self.reader.width * self.reader.height
-                            actual_bytes = len(img_array)
-
-                            if actual_bytes >= expected_pixels:
-                                bytes_per_row = actual_bytes // self.reader.height
-                                img_array = img_array[:self.reader.height * bytes_per_row].reshape((self.reader.height, bytes_per_row))
-                                img_array = img_array[:, :self.reader.width]
-                            else:
-                                img_array = img_array.reshape((self.reader.height, self.reader.width))
-
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((self.reader.height, self.reader.width))
                             # 裁剪 ROI 区域
                             roi_array = img_array[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width]
 
                         elif self.reader.bit_depth == 16:
-                            img_array = np.frombuffer(frame_data, dtype=np.uint16)
-                            expected_pixels = self.reader.width * self.reader.height
-                            actual_pixels = len(img_array)
-
-                            if actual_pixels >= expected_pixels:
-                                pixels_per_row = actual_pixels // self.reader.height
-                                img_array = img_array[:self.reader.height * pixels_per_row].reshape((self.reader.height, pixels_per_row))
-                                img_array = img_array[:, :self.reader.width]
-                            else:
-                                img_array = img_array.reshape((self.reader.height, self.reader.width))
-
+                            img_array = np.frombuffer(frame_data, dtype=np.uint16).reshape((self.reader.height, self.reader.width))
                             # 裁剪 ROI 区域
                             roi_array = img_array[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width]
 
                         elif self.reader.bit_depth == 24:
-                            img_array = np.frombuffer(frame_data, dtype=np.uint8)
-                            expected_bytes = self.reader.width * self.reader.height * 3
-                            actual_bytes = len(img_array)
-
-                            if actual_bytes >= expected_bytes:
-                                bytes_per_row = actual_bytes // self.reader.height
-                                img_array = img_array[:self.reader.height * bytes_per_row].reshape((self.reader.height, bytes_per_row))
-                                img_array = img_array[:, :self.reader.width * 3]
-                                img_array = img_array.reshape((self.reader.height, self.reader.width, 3))
-                            else:
-                                img_array = img_array.reshape((self.reader.height, self.reader.width, 3))
-
+                            img_array = np.frombuffer(frame_data, dtype=np.uint8).reshape((self.reader.height, self.reader.width, 3))
                             # 裁剪 ROI 区域
                             roi_array = img_array[roi_y:roi_y+roi_height, roi_x:roi_x+roi_width, :]
 
